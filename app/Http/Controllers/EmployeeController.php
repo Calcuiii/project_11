@@ -8,6 +8,8 @@ use Illuminate\Http\Request;
 use illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
+use Storage;
+use Str;
 
 class EmployeeController extends Controller
 {
@@ -35,10 +37,10 @@ class EmployeeController extends Controller
     {
         $pageTitle = 'Create Employee';
 
-    // ELOQUENT
-    $positions = Position::all();
+        // ELOQUENT
+        $positions = Position::all();
 
-    return view('employee.create', compact('pageTitle', 'positions'));
+        return view('employee.create', compact('pageTitle', 'positions'));
 
     }
 
@@ -52,29 +54,36 @@ class EmployeeController extends Controller
             'email' => 'Isi :attribute dengan format yang benar',
             'numeric' => 'Isi :attribute dengan angka'
         ];
-
         $validator = Validator::make($request->all(), [
             'firstName' => 'required',
             'lastName' => 'required',
             'email' => 'required|email',
             'age' => 'required|numeric',
         ], $messages);
-
         if ($validator->fails()) {
             return redirect()->back()->withErrors($validator)->withInput();
         }
-
+        // Get File
+        $file = $request->file('cv');
+        if ($file != null) {
+            $originalFilename = $file->getClientOriginalName();
+            $encryptedFilename = $file->hashName();
+            // Store File
+            $file->store('public/files');
+        }
         // ELOQUENT
-        $employee = New Employee;
+        $employee = new Employee;
         $employee->firstname = $request->firstName;
         $employee->lastname = $request->lastName;
         $employee->email = $request->email;
         $employee->age = $request->age;
         $employee->position_id = $request->position;
+        if ($file != null) {
+            $employee->original_filename = $originalFilename;
+            $employee->encrypted_filename = $encryptedFilename;
+        }
         $employee->save();
-
         return redirect()->route('employees.index');
-
     }
 
     /**
@@ -98,11 +107,11 @@ class EmployeeController extends Controller
     {
         $pageTitle = 'Edit Employee';
 
-    // ELOQUENT
-    $positions = Position::all();
-    $employee = Employee::find($id);
+        // ELOQUENT
+        $positions = Position::all();
+        $employee = Employee::find($id);
 
-    return view('employee.edit', compact('pageTitle', 'positions', 'employee'));
+        return view('employee.edit', compact('pageTitle', 'positions', 'employee'));
 
     }
 
@@ -146,10 +155,55 @@ class EmployeeController extends Controller
      */
     public function destroy(string $id)
     {
-         // ELOQUENT
-    Employee::find($id)->delete();
+        // ELOQUENT
+        Employee::find($id)->delete();
 
-    return redirect()->route('employees.index');
+        return redirect()->route('employees.index');
 
     }
+    public function downloadFile($employeeId)
+    {
+        // Mencari data karyawan berdasarkan ID
+        $employee = Employee::find($employeeId);
+
+        // Mengecek jika karyawan ditemukan
+        if (!$employee) {
+            return response()->json(['error' => 'Employee not found'], 404);
+        }
+
+        // Menentukan nama file yang terenkripsi di storage
+        $encryptedFilename = 'public/files/' . $employee->encrypted_filename;
+
+        // Menentukan nama file yang akan diunduh (dengan format firstname_lastname_cv.pdf)
+        $downloadFilename = Str::lower($employee->firstname . '_' . $employee->lastname . '_cv.pdf');
+
+        // Mengecek jika file terdapat di storage
+        if (Storage::exists($encryptedFilename)) {
+            // Jika file ada, lakukan download
+            return Storage::download($encryptedFilename, $downloadFilename);
+        }
+
+        // Jika file tidak ada, beri respons error
+        return response()->json(['error' => 'File not found'], 404);
+    }
+    public function uploadCV(Request $request, $employeeId)
+    {
+        $employee = Employee::find($employeeId);
+
+        // Pastikan file diunggah dengan benar
+        if ($request->hasFile('cv') && $request->file('cv')->isValid()) {
+            // Menyimpan file ke storage
+            $path = $request->file('cv')->storeAs('public/files', $employee->id . '_cv.pdf');
+
+            // Menyimpan nama file di database
+            $employee->original_filename = $request->file('cv')->getClientOriginalName();
+            $employee->encrypted_filename = basename($path); // Simpan nama file terenkripsi
+            $employee->save();
+
+            return response()->json(['message' => 'File uploaded successfully']);
+        }
+
+        return response()->json(['error' => 'Invalid file'], 400);
+    }
+
 }
